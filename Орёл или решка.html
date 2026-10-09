@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Орёл или решка</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root { --bg:#1b1630; --ink:#fff6dc; --muted:#a79fc4; --gold:#ffd22e; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; user-select:none; -webkit-user-select:none; }
+  html,body { height:100%; margin:0; }
+  body {
+    background:radial-gradient(ellipse at 50% 60%, #2c2350, var(--bg) 75%);
+    color:var(--ink); font-family:ui-rounded,"SF Pro Rounded","Arial Rounded MT Bold",system-ui,sans-serif;
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:12px;
+    padding:20px; padding-top:calc(20px + env(safe-area-inset-top,0px)); padding-bottom:calc(20px + env(safe-area-inset-bottom,0px));
+    overflow:hidden;
+  }
+  #result { font-size:34px; font-weight:800; min-height:44px; }
+  #cam { position:relative; width:340px; max-width:100%; height:340px; perspective:1100px; perspective-origin:50% 40%; cursor:pointer; touch-action:manipulation; }
+  #floor {
+    position:absolute; left:50%; margin-left:-145px; top:-50px; width:290px; height:440px;
+    transform-style:preserve-3d; transform:rotateX(55deg);
+    border-radius:24px; border:10px solid #4d2f14;
+    background:
+      radial-gradient(ellipse at 50% 50%, rgba(255,220,150,.28), rgba(0,0,0,.28) 100%),
+      repeating-linear-gradient(90deg,#9a6733 0 46px,#85552a 46px 49px,#a47038 49px 95px,#85552a 95px 98px);
+    box-shadow:inset 0 0 40px rgba(0,0,0,.45);
+  }
+  #shadow { position:absolute; left:50%; top:50%; width:130px; height:130px; margin:-65px 0 0 -65px;
+    background:radial-gradient(circle, rgba(0,0,0,.6) 0, rgba(0,0,0,.35) 45%, rgba(0,0,0,0) 70%); transform:translateZ(.5px); }
+  #lift { position:absolute; left:50%; top:50%; width:0; height:0; transform-style:preserve-3d; }
+  #coin { position:absolute; left:-56px; top:-56px; width:112px; height:112px; transform-style:preserve-3d; }
+  .layer, .face { position:absolute; inset:0; border-radius:50%; }
+  .layer:nth-child(odd) { background:#f2b01e; }
+  .layer:nth-child(even) { background:#c47a00; }
+  .face {
+    backface-visibility:hidden; -webkit-backface-visibility:hidden;
+    display:flex; align-items:center; justify-content:center;
+    border:5px solid #6b3d00;
+    background:radial-gradient(circle at 32% 28%, #fff08a 0, #ffd22e 45%, #f5a800 100%);
+  }
+  .face::before { content:""; position:absolute; inset:7px; border-radius:50%; border:3px solid #e29a00; }
+  .face::after { content:""; position:absolute; top:15px; left:18px; width:30px; height:11px; border-radius:50%;
+    background:rgba(255,255,255,.75); transform:rotate(-35deg); }
+  .sym { position:relative; z-index:1; font-size:62px; font-weight:900; line-height:1; color:#ffe56b;
+    -webkit-text-stroke:5px #6b3d00; paint-order:stroke fill; text-shadow:0 4px 0 #a55f00; }
+  #badge {
+    position:absolute; left:50%; top:214px; z-index:5; pointer-events:none;
+    background:var(--gold); color:#4a2a00; border:3px solid #6b3d00; border-radius:16px;
+    padding:3px 14px; font-size:18px; font-weight:800; white-space:nowrap;
+    opacity:0; transform:translateX(-50%) scale(.5); transition:opacity .25s, transform .3s cubic-bezier(.3,1.6,.5,1);
+  }
+  #badge.show { opacity:1; transform:translateX(-50%) scale(1); }
+  #hint { color:var(--muted); font-size:15px; }
+  #stats { color:var(--muted); font-size:16px; }
+</style>
+</head>
+<body>
+  <div id="result" aria-live="polite">Подбрось монетку</div>
+  <div id="cam" role="button" aria-label="Подбросить монетку" tabindex="0">
+    <div id="floor">
+      <div id="shadow"></div>
+      <div id="lift"><div id="coin"></div></div>
+    </div>
+    <div id="badge"></div>
+  </div>
+  <div id="hint">Нажми на монетку · $ = орёл, 1 = решка</div>
+  <div id="stats">Орёл: 0 · Решка: 0</div>
+
+<script>
+  const tg = window.Telegram && Telegram.WebApp;
+  if (tg) { tg.ready(); tg.expand(); }
+  const $ = id => document.getElementById(id);
+  const coin = $('coin'), lift = $('lift'), shadow = $('shadow'), cam = $('cam');
+  const result = $('result'), badge = $('badge'), stats = $('stats');
+
+  // Монетка с толщиной: стопка дисков + две стороны
+  const R = 56, T = 20, N = 18, rad = Math.PI / 180;
+  for (let i = 0; i < N; i++) {
+    const d = document.createElement('div');
+    d.className = 'layer';
+    d.style.transform = 'translateZ(' + ((i / (N - 1) - 0.5) * T) + 'px)';
+    coin.appendChild(d);
+  }
+  const front = document.createElement('div');   // орёл = доллар
+  front.className = 'face';
+  front.style.transform = 'translateZ(' + (T / 2 + 0.5) + 'px)';
+  front.innerHTML = '<span class="sym">$</span>';
+  const back = document.createElement('div');    // решка = единица
+  back.className = 'face';
+  back.style.transform = 'rotateX(180deg) translateZ(' + (T / 2 + 0.5) + 'px)';
+  back.innerHTML = '<span class="sym">1</span>';
+  coin.appendChild(front); coin.appendChild(back);
+
+  function flipBit() { const a = new Uint8Array(1); crypto.getRandomValues(a); return a[0] & 1; } // честный 50/50
+  const randInt = (a, b) => { const x = new Uint32Array(1); crypto.getRandomValues(x); return a + x[0] % (b - a + 1); };
+
+  // Высота центра так, чтобы нижняя точка монетки никогда не уходила под стол
+  const ground = th => 1 + R * Math.abs(Math.sin(th * rad)) + (T / 2) * Math.abs(Math.cos(th * rad));
+  const MAXH = 170;
+  function render(th, extra, zr, ry) {
+    ry = ry || 0;
+    const z = ground(th) + extra + R * Math.sin(Math.abs(ry) * rad);
+    lift.style.transform = 'translate3d(0,0,' + z + 'px)';
+    coin.style.transform = 'rotateZ(' + zr + 'deg) rotateY(' + ry + 'deg) rotateX(' + th + 'deg)';
+    const k = Math.min((z - T / 2) / (MAXH + R), 1);
+    shadow.style.transform = 'translateZ(.5px) scale(' + (1 - 0.5 * k) + ')';
+    shadow.style.opacity = 1 - 0.55 * k;
+  }
+  render(0, 0, 0, 0);
+
+  const hop = q => {
+    const h = (u, m) => m * 4 * u * (1 - u);
+    if (q < .45) return h(q / .45, 24);
+    if (q < .75) return h((q - .45) / .3, 9);
+    return h((q - .75) / .25, 3);
+  };
+  const turnsWord = n => n + (n < 5 ? ' оборота' : ' оборотов');
+
+  let rot = 0, pz = 0, flying = false, heads = 0, tails = 0;
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  function toss() {
+    if (flying) return;
+    flying = true;
+    const isHeads = flipBit() === 0;
+    const n = randInt(3, 6);                        // число оборотов
+    const start = rot;
+    let target = start + n * 360;
+    if ((target % 360 === 0) !== isHeads) target += 180;
+    const total = target - start;
+
+    const FLY = reduce ? 200 : 1700 + n * 130, BOUNCE = reduce ? 1 : 1100;
+    const A = 0.82, B = 0.1;                         // раскрутка до B, замедление после A
+    const w = 2 * total / (1 + A - B);
+    const z0 = pz, z1 = (Math.random() - .5) * 100;  // угол, под которым монетка ляжет
+
+    result.textContent = '…';
+    badge.classList.remove('show');
+    if (tg && tg.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
+    const t0 = performance.now();
+    let touched = false;
+
+    function frame(now) {
+      const t = now - t0;
+      if (t < FLY) {
+        const p = t / FLY;
+        let th;
+        if (p < B) th = w * p * p / (2 * B);
+        else if (p <= A) th = w * (B / 2 + (p - B));
+        else { const u = (p - A) / (1 - A); th = w * (B / 2 + (A - B) + (1 - A) * (u - u * u / 2)); }
+        const e = p * p * (3 - 2 * p);
+        render(start + th, MAXH * 4 * p * (1 - p), z0 + (z1 - z0) * e,
+               10 * Math.sin(p * Math.PI * 3) * Math.sin(p * Math.PI));
+        requestAnimationFrame(frame);
+      } else if (t < FLY + BOUNCE) {
+        const q = (t - FLY) / BOUNCE;
+        if (!touched) { touched = true; if (tg && tg.HapticFeedback) tg.HapticFeedback.impactOccurred('heavy'); }
+        const wob = 12 * Math.sin(q * Math.PI * 5) * Math.pow(1 - q, 2);
+        render(target + wob, hop(q), z1, 0);
+        requestAnimationFrame(frame);
+      } else {
+        rot = target; pz = z1;
+        render(target, 0, pz, 0);
+        if (isHeads) heads++; else tails++;
+        result.textContent = isHeads ? 'Орёл!' : 'Решка!';
+        badge.textContent = turnsWord(n);
+        badge.classList.add('show');
+        stats.textContent = 'Орёл: ' + heads + ' · Решка: ' + tails;
+        if (tg && tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
+        flying = false;
+      }
+    }
+    requestAnimationFrame(frame);
+  }
+
+  cam.addEventListener('click', toss);
+  cam.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toss(); } });
+</script>
+</body>
+</html>
